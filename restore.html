@@ -8,7 +8,7 @@
 <title>Bringing your Fives progress over</title>
 <style>
   :root{
-    --bg:#1C1C1C; --panel:#252525; --lime:#D8F55E; --lime-soft:#E7FA98;
+    --bg:#1C1C1C; --panel:#252525; --panel-2:#2E2E2E; --lime:#D8F55E; --lime-soft:#E7FA98;
     --ink:#15170F; --fg:#F2F3EE; --fg-dim:rgba(242,243,238,.52); --line:rgba(242,243,238,.14);
   }
   *{ box-sizing:border-box; }
@@ -31,10 +31,42 @@
     font-size:12px; font-weight:800; letter-spacing:.10em; text-transform:uppercase;
   }
   a.go:hover{ background:var(--lime-soft); }
-  a.go[aria-disabled="true"]{ background:var(--panel); color:var(--fg-dim); }
+  a.go.quiet{ background:var(--panel); color:var(--fg); }
+  a.go.quiet:hover{ background:var(--panel-2); }
   .foot{ margin-top:26px; border-top:1px solid var(--line); padding-top:18px; }
   .foot p{ font-size:12.5px; margin:0; }
-  code{ color:var(--lime); font-size:13px; word-break:break-all; }</style>
+  code{ color:var(--lime); font-size:13px; word-break:break-all; }
+
+  button{
+    width:100%; margin-top:16px; font-family:inherit; font-size:12px; font-weight:800;
+    letter-spacing:.10em; text-transform:uppercase; color:var(--ink); background:var(--lime);
+    border:none; border-radius:999px; padding:14px 16px; cursor:pointer;
+  }
+  button:hover{ background:var(--lime-soft); }
+  button:active{ transform:translateY(1px); }
+  button.quiet{ background:var(--panel); color:var(--fg); }
+  button.done{ background:var(--panel); color:var(--fg); }
+
+  ol{ margin:24px 0 0; padding:0; list-style:none; counter-reset:s; text-align:left; }
+  ol li{
+    counter-increment:s; position:relative; padding:0 0 0 34px; margin-bottom:13px;
+    font-size:14px; color:var(--fg);
+  }
+  ol li::before{
+    content:counter(s); position:absolute; left:0; top:1px;
+    width:22px; height:22px; border-radius:50%; background:var(--panel); color:var(--lime);
+    font-size:11.5px; font-weight:700; display:flex; align-items:center; justify-content:center;
+  }
+  /* The blob is only ever revealed when the clipboard is refused. It is a
+     thousand characters of base64 and nobody should have to look at it, but
+     a button that cannot work must still leave a way through. */
+  textarea{
+    width:100%; margin-top:14px; height:88px; resize:none;
+    background:var(--panel); color:var(--fg-dim); border:1px solid var(--line);
+    border-radius:14px; padding:10px 12px; font-size:11px; font-family:ui-monospace,monospace;
+    word-break:break-all;
+  }
+  .hide{ display:none; }</style>
 </head>
 <body>
 <div class="wrap">
@@ -42,6 +74,13 @@
   <div class="rule"></div>
   <h1 id="head">Bringing your progress over</h1>
   <p id="sub">One moment.</p>
+
+  <div id="pastebox" class="hide">
+    <button id="paste">Paste my progress</button>
+    <textarea id="blob" class="hide" placeholder="Paste here" aria-label="Your progress"></textarea>
+    <button id="use" class="quiet hide">Use this</button>
+  </div>
+
   <a class="go" id="go" href="./">Play</a>
 </div>
 <script>
@@ -94,13 +133,10 @@
     setTimeout(function () { location.replace("./"); }, wait);
   }
 
-  var payload = location.hash.slice(1);
-  if (!payload) { location.replace("./"); return; }
-
   /* ⚠ NEVER OVERWRITE PROGRESS THAT IS ALREADY HERE. Somebody who has
-     played on the new address and then taps their old icon a month later
-     would otherwise have a month replaced by a stale copy. The old page is
-     a one-way door and it only opens onto an empty room. */
+     played on the new address and then pastes an old copy a month later
+     would otherwise have a month replaced by a stale one. This page only
+     ever opens onto an empty room. */
   function alreadyPlaying() {
     try {
       var c = JSON.parse(localStorage.getItem("fives.campaign.v1") || "null");
@@ -121,20 +157,78 @@
     return;
   }
 
+  /* Written raw on purpose. The game validates and repairs both saves on
+     the way in — a bad board is re-dealt, a bad wallet is mended field by
+     field — so this page does not need to know their shape, and cannot
+     invent a second opinion about it. */
+  async function apply(text) {
+    var save = await unpack((text || "").trim());
+    if (!save || (!save.c && !save.p)) throw new Error("nothing in it");
+    if (save.c) localStorage.setItem("fives.campaign.v1", JSON.stringify(save.c));
+    if (save.p) localStorage.setItem("fives.play.v2", JSON.stringify(save.p));
+    var keys = (save.c && Number(save.c.keys)) || 0;
+    done(keys ? "Your progress came with you, keys and all." : "Your progress came with you.", 1400);
+  }
+
+  var payload = location.hash.slice(1);
+
+  /* ---- the paste route: the one that has to work ----
+     An installed iOS app cannot be reached by a link and does not share
+     storage with Safari, so this is how somebody on a home screen gets
+     their save across. They arrive here from the picker footer. */
+  function offerPaste(message) {
+    head.textContent = "Coming from the old Fives?";
+    sub.textContent = message;
+    var box = document.getElementById("pastebox");
+    var blob = document.getElementById("blob");
+    var pasteBtn = document.getElementById("paste");
+    var useBtn = document.getElementById("use");
+    box.className = "";
+
+    function tryText(text) {
+      apply(text).catch(function () {
+        sub.textContent = "That does not look like a Fives save. Try copying it again.";
+        blob.className = "";
+        useBtn.className = "quiet";
+      });
+    }
+
+    pasteBtn.addEventListener("click", function () {
+      /* ⚠ iOS shows an Allow prompt before any page may read the clipboard.
+         That is one extra tap and it cannot be designed away — the unlock
+         flow hit the same thing. If it is refused, the textarea below is
+         the way through, so the button is never a dead end. */
+      if (navigator.clipboard && navigator.clipboard.readText) {
+        navigator.clipboard.readText().then(tryText, function () {
+          blob.className = "";
+          useBtn.className = "quiet";
+          sub.textContent = "Paste it into the box, then tap Use this.";
+          blob.focus();
+        });
+      } else {
+        blob.className = "";
+        useBtn.className = "quiet";
+        sub.textContent = "Paste it into the box, then tap Use this.";
+        blob.focus();
+      }
+    });
+
+    useBtn.addEventListener("click", function () { tryText(blob.value); });
+  }
+
+  if (!payload) {
+    offerPaste("Paste the progress you copied from the old address.");
+    return;
+  }
+
+  /* ---- the link route: kept because it is seamless in a browser ---- */
   (async function () {
     try {
-      var save = await unpack(payload);
-      /* Written raw on purpose. The game validates and repairs both saves
-         on the way in — a bad board is re-dealt, a bad wallet is mended
-         field by field — so this page does not need to know their shape,
-         and cannot invent a second opinion about it. */
-      if (save && save.c) localStorage.setItem("fives.campaign.v1", JSON.stringify(save.c));
-      if (save && save.p) localStorage.setItem("fives.play.v2", JSON.stringify(save.p));
-      var keys = (save && save.c && Number(save.c.keys)) || 0;
-      done(keys ? "Your progress came with you, keys and all." : "Your progress came with you.", 1400);
+      await apply(payload);
     } catch (e) {
-      /* A mangled link must not strand anybody on this page. */
-      done("Could not read that link, so Fives is starting fresh.", 2600);
+      /* A mangled link must not strand anybody. Fall back to the paste box
+         rather than dumping them into a fresh game with no explanation. */
+      offerPaste("That link could not be read. Paste your progress instead.");
     }
   })();
 })();

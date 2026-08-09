@@ -57,15 +57,22 @@
     width:22px; height:22px; border-radius:50%; background:var(--panel); color:var(--lime);
     font-size:11.5px; font-weight:700; display:flex; align-items:center; justify-content:center;
   }
-  /* The blob is only ever revealed when the clipboard is refused. It is a
-     thousand characters of base64 and nobody should have to look at it, but
-     a button that cannot work must still leave a way through. */
+  /* A thousand characters of base64 that nobody should have to look at, but
+     a button that cannot work must still leave a way through.
+
+     ⚠ 16px IS NOT A STYLE CHOICE AND MUST NOT BE REDUCED. iOS zooms the
+     whole page when you focus any field with text under 16px, which throws
+     the layout about and puts the buttons off screen. The unlock code field
+     learned this in July and was bumped from 13px for the same reason. This
+     box shipped at 11px and did it again on Brad's phone on 2026-08-08.
+     Small text here is not worth a zoom. */
   textarea{
-    width:100%; margin-top:14px; height:88px; resize:none;
+    width:100%; margin-top:14px; height:96px; resize:none;
     background:var(--panel); color:var(--fg-dim); border:1px solid var(--line);
-    border-radius:14px; padding:10px 12px; font-size:11px; font-family:ui-monospace,monospace;
-    word-break:break-all;
+    border-radius:14px; padding:12px; font-size:16px; line-height:1.35;
+    font-family:ui-monospace,monospace; word-break:break-all;
   }
+  textarea:focus{ outline:2px solid var(--lime); outline-offset:2px; }
   .hide{ display:none; }</style>
 </head>
 <body>
@@ -75,9 +82,17 @@
   <h1 id="head">Bringing your progress over</h1>
   <p id="sub">One moment.</p>
 
+  <!-- ⚠ THE BOX IS VISIBLE FROM THE START, not revealed when the button
+       fails. Hiding it meant that on iOS, where the clipboard read is
+       refused more often than not, the first tap did nothing useful and
+       then a box appeared and grabbed focus. Two surprises and a zoom.
+       Showing both means whichever route works for you is already in front
+       of you, and the button is a shortcut rather than a gate. -->
   <div id="pastebox" class="hide">
     <button id="paste">Paste my progress</button>
-    <textarea id="blob" class="hide" placeholder="Paste here" aria-label="Your progress"></textarea>
+    <textarea id="blob" placeholder="or paste it in here"
+      aria-label="Your progress"
+      autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false"></textarea>
     <button id="use" class="quiet hide">Use this</button>
   </div>
 
@@ -184,34 +199,57 @@
     var pasteBtn = document.getElementById("paste");
     var useBtn = document.getElementById("use");
     box.className = "";
+    /* Pasting is the action on this screen. Play is the way out for someone
+       who does not want to, so it goes quiet — one lime thing at a time. */
+    document.getElementById("go").className = "go quiet";
+    document.getElementById("go").textContent = "Skip, start fresh";
 
     function tryText(text) {
       apply(text).catch(function () {
         sub.textContent = "That does not look like a Fives save. Try copying it again.";
-        blob.className = "";
-        useBtn.className = "quiet";
       });
     }
 
+    /* Only attempt something that is actually shaped like a save. Without
+       this gate, typing or a half-finished paste fires the error on every
+       keystroke. */
+    function looksLikeSave(t) {
+      t = (t || "").trim();
+      return t.indexOf("z1.") === 0 || t.indexOf("s1.") === 0;
+    }
+
+    function manual(message) {
+      sub.textContent = message;
+      /* ⚠ Do NOT focus the box here. On iOS a programmatic focus opens the
+         keyboard and scrolls the page before the person has decided to do
+         anything, and the buttons go off screen. Let them tap it. */
+    }
+
     pasteBtn.addEventListener("click", function () {
-      /* ⚠ iOS shows an Allow prompt before any page may read the clipboard.
-         That is one extra tap and it cannot be designed away — the unlock
-         flow hit the same thing. If it is refused, the textarea below is
-         the way through, so the button is never a dead end. */
+      /* ⚠ iOS shows an Allow prompt before any page may read the clipboard,
+         and often refuses outright inside an installed app. That extra tap
+         cannot be designed away — the unlock flow hit the same wall. The box
+         below is already on screen, so a refusal costs nothing. */
       if (navigator.clipboard && navigator.clipboard.readText) {
         navigator.clipboard.readText().then(tryText, function () {
-          blob.className = "";
-          useBtn.className = "quiet";
-          sub.textContent = "Paste it into the box, then tap Use this.";
-          blob.focus();
+          manual("Tap the box, hold, and choose Paste.");
         });
       } else {
-        blob.className = "";
-        useBtn.className = "quiet";
-        sub.textContent = "Paste it into the box, then tap Use this.";
-        blob.focus();
+        manual("Tap the box, hold, and choose Paste.");
       }
     });
+
+    /* The paste itself is the confirmation. Nobody should have to paste and
+       then press a second button to mean it. "Use this" only appears if
+       something lands in the box that we did not recognise, so the normal
+       path is one action and the screen stays short. */
+    function settle() {
+      if (looksLikeSave(blob.value)) { tryText(blob.value); return; }
+      if (blob.value.trim()) useBtn.className = "quiet";
+    }
+    /* On paste the value is not set until after the event, hence the tick. */
+    blob.addEventListener("paste", function () { setTimeout(settle, 0); });
+    blob.addEventListener("input", settle);
 
     useBtn.addEventListener("click", function () { tryText(blob.value); });
   }

@@ -1,0 +1,24 @@
+{
+  "name": "FIVES",
+  "short_name": "FIVES",
+  "description": "Five hidden words. Slide the tiles to find them.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#1C1C1C",
+  "theme_color": "#1C1C1C",
+  "icons": [
+    {
+      "src": "fives-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "fives-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#1C1C1C">
+<title>Bringing your Fives progress over</title>
+<style>
+  :root{
+    --bg:#1C1C1C; --panel:#252525; --lime:#D8F55E; --lime-soft:#E7FA98;
+    --ink:#15170F; --fg:#F2F3EE; --fg-dim:rgba(242,243,238,.52); --line:rgba(242,243,238,.14);
+  }
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; background:var(--bg); min-height:100%; }
+  body{
+    color:var(--fg); line-height:1.5;
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex; justify-content:center;
+    padding:calc(40px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom));
+  }
+  .wrap{ width:100%; max-width:380px; text-align:center; }
+  .mark{ font-size:30px; font-weight:800; letter-spacing:.16em; margin-right:-.16em; line-height:1; }
+  .rule{ width:96px; height:7px; margin:12px auto 26px; border-radius:999px; background:var(--lime); }
+  h1{ font-size:19px; font-weight:600; letter-spacing:.02em; margin:0 0 10px; }
+  p{ font-size:14px; color:var(--fg-dim); margin:0 0 16px; }
+  p.keep{ color:var(--fg); }
+  a.go{
+    display:block; margin-top:22px; padding:14px 16px; border-radius:999px;
+    background:var(--lime); color:var(--ink); text-decoration:none;
+    font-size:12px; font-weight:800; letter-spacing:.10em; text-transform:uppercase;
+  }
+  a.go:hover{ background:var(--lime-soft); }
+  a.go[aria-disabled="true"]{ background:var(--panel); color:var(--fg-dim); }
+  .foot{ margin-top:26px; border-top:1px solid var(--line); padding-top:18px; }
+  .foot p{ font-size:12.5px; margin:0; }
+  code{ color:var(--lime); font-size:13px; word-break:break-all; }</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="mark">FIVES</div>
+  <div class="rule"></div>
+  <h1 id="head">Bringing your progress over</h1>
+  <p id="sub">One moment.</p>
+  <a class="go" id="go" href="./">Play</a>
+</div>
+<script>
+(function () {
+
+  function b64(bytes) {
+    var s = "", CH = 0x8000;
+    for (var i = 0; i < bytes.length; i += CH) {
+      s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+    }
+    return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function unb64(str) {
+    var s = str.replace(/-/g, "+").replace(/_/g, "/");
+    while (s.length % 4) s += "=";
+    var bin = atob(s), out = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+  async function pack(obj) {
+    var bytes = new TextEncoder().encode(JSON.stringify(obj));
+    if (typeof CompressionStream === "function") {
+      try {
+        var cs = new CompressionStream("gzip");
+        var buf = await new Response(new Blob([bytes]).stream().pipeThrough(cs)).arrayBuffer();
+        return "z1." + b64(new Uint8Array(buf));
+      } catch (e) { /* fall through to plain */ }
+    }
+    return "s1." + b64(bytes);
+  }
+  async function unpack(str) {
+    var at = str.indexOf(".");
+    if (at < 0) throw new Error("no marker");
+    var kind = str.slice(0, at), bytes = unb64(str.slice(at + 1));
+    if (kind === "z1") {
+      var ds = new DecompressionStream("gzip");
+      var buf = await new Response(new Blob([bytes]).stream().pipeThrough(ds)).arrayBuffer();
+      return JSON.parse(new TextDecoder().decode(buf));
+    }
+    if (kind !== "s1") throw new Error("unknown marker");
+    return JSON.parse(new TextDecoder().decode(bytes));
+  }
+
+  var head = document.getElementById("head");
+  var sub = document.getElementById("sub");
+
+  function done(msg, wait) {
+    head.textContent = "Ready";
+    sub.textContent = msg;
+    setTimeout(function () { location.replace("./"); }, wait);
+  }
+
+  var payload = location.hash.slice(1);
+  if (!payload) { location.replace("./"); return; }
+
+  /* ⚠ NEVER OVERWRITE PROGRESS THAT IS ALREADY HERE. Somebody who has
+     played on the new address and then taps their old icon a month later
+     would otherwise have a month replaced by a stale copy. The old page is
+     a one-way door and it only opens onto an empty room. */
+  function alreadyPlaying() {
+    try {
+      var c = JSON.parse(localStorage.getItem("fives.campaign.v1") || "null");
+      if (c) {
+        if (Number(c.keys) > 0) return true;
+        if (c.boards && Object.keys(c.boards).length) return true;
+        if (c.unlocked && c.unlocked.length) return true;
+        if (c.owned && c.owned.some(function (o) { return o !== "base"; })) return true;
+      }
+      var p = JSON.parse(localStorage.getItem("fives.play.v2") || "null");
+      if (p && p.boards && Object.keys(p.boards).length) return true;
+    } catch (e) { /* storage blocked: treat as empty and try */ }
+    return false;
+  }
+
+  if (alreadyPlaying()) {
+    done("You already have progress here, so nothing was changed.", 2600);
+    return;
+  }
+
+  (async function () {
+    try {
+      var save = await unpack(payload);
+      /* Written raw on purpose. The game validates and repairs both saves
+         on the way in — a bad board is re-dealt, a bad wallet is mended
+         field by field — so this page does not need to know their shape,
+         and cannot invent a second opinion about it. */
+      if (save && save.c) localStorage.setItem("fives.campaign.v1", JSON.stringify(save.c));
+      if (save && save.p) localStorage.setItem("fives.play.v2", JSON.stringify(save.p));
+      var keys = (save && save.c && Number(save.c.keys)) || 0;
+      done(keys ? "Your progress came with you, keys and all." : "Your progress came with you.", 1400);
+    } catch (e) {
+      /* A mangled link must not strand anybody on this page. */
+      done("Could not read that link, so Fives is starting fresh.", 2600);
+    }
+  })();
+})();
+</script>
+</body>
+</html>
